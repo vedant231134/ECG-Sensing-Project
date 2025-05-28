@@ -1,0 +1,111 @@
+// HTML/JS frontend code stored in flash memory
+const char htmlPage[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ECG + BPM Monitor</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    body { background: #111; color: #fff; font-family: sans-serif; margin: 0; text-align: center; }
+    h1 { color: #0f0; margin-top: 10px; }
+    #ecgChart, #bpmChart { width: 95%; height: 300px; margin: 10px auto; }
+    #bpmNow { font-size: 1.5em; color: #0cf; margin: 10px; }
+  </style>
+</head>
+<body>
+  <h1>ECG & BPM Monitor (Real-Time)</h1>
+  <div id="ecgChart"></div>
+  <div id="bpmNow">BPM: --</div>
+  <div id="bpmChart"></div>
+
+  <script>
+    // Initialize buffers
+    const ecgBuffer = Array(500).fill(2048);
+    const xECG = Array.from({length: 500}, (_, i) => i);
+    let lastFiltered = 2048;
+    const alpha = 0.2;
+
+    let lastPeakTime = Date.now();
+    let bpm = 0;
+    let bpmData = [], bpmTime = [];
+
+    // ECG Chart
+    Plotly.newPlot("ecgChart", [{
+      x: xECG,
+      y: ecgBuffer,
+      type: "scatter",
+      mode: "lines",
+      line: { color: "#0f0" }
+    }], {
+      title: "ECG Signal",
+      paper_bgcolor: "#000",
+      plot_bgcolor: "#000",
+      margin: { t: 40, l: 50, r: 30, b: 30 },
+      xaxis: { showticklabels: false },
+      yaxis: { range: [0, 4095], gridcolor: "#333" }
+    });
+
+    // BPM Chart
+    Plotly.newPlot("bpmChart", [{
+      x: [],
+      y: [],
+      type: "scatter",
+      mode: "lines+markers",
+      line: { color: "#0cf" }
+    }], {
+      title: "BPM Over Time",
+      paper_bgcolor: "#000",
+      plot_bgcolor: "#000",
+      margin: { t: 40, l: 50, r: 30, b: 40 },
+      xaxis: { title: "Time", gridcolor: "#333" },
+      yaxis: { title: "BPM", range: [40, 180], gridcolor: "#333" }
+    });
+
+    function updateECG(val) {
+      ecgBuffer.push(val);
+      ecgBuffer.shift();
+      Plotly.update("ecgChart", { y: [ecgBuffer] });
+    }
+
+    function updateBPM(bpm) {
+      const now = new Date().toLocaleTimeString();
+      bpmData.push(bpm);
+      bpmTime.push(now);
+      if (bpmData.length > 60) {
+        bpmData.shift();
+        bpmTime.shift();
+      }
+      Plotly.update("bpmChart", {
+        x: [bpmTime],
+        y: [bpmData]
+      });
+    }
+
+    function detectRWave(val) {
+      const threshold = 2500;
+      if (val > threshold && lastFiltered < threshold) {
+        const now = Date.now();
+        const interval = now - lastPeakTime;
+        lastPeakTime = now;
+        if (interval > 300 && interval < 2000) {
+          bpm = Math.round(60000 / interval);
+          document.getElementById("bpmNow").textContent = "BPM: " + bpm;
+          updateBPM(bpm);
+        }
+      }
+    }
+
+    const ws = new WebSocket("ws://" + location.hostname + ":81");
+    ws.onmessage = (event) => {
+      const raw = parseInt(event.data);
+      if (!isNaN(raw)) {
+        lastFiltered = alpha * raw + (1 - alpha) * lastFiltered;
+        detectRWave(raw);
+        updateECG(lastFiltered);
+      }
+    };
+  </script>
+</body>
+</html>
+)rawliteral";
